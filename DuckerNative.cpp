@@ -62,6 +62,12 @@ struct mat4 {
 };
 
 /*
+    Загаловок для функции создания матрицы модели    
+*/
+
+mat4 CreateRotationMatrix(float angle, Vec2 origin, RectF bounds);
+
+/*
     Все существующие типы объектов
         1. Rect - Стандартный прямоугольник, который состоит из
             4 вершин и 4 граней 
@@ -244,6 +250,9 @@ struct RenderObject {
 
     int elevation = 0;
 
+    float rotation = 0.0f;
+    Vec2 rotationOrigin = {0.5f, 0.5f};
+
     /*
         Эти параметры нужны только для линий,
             в случае других объектов они не используются.
@@ -408,12 +417,13 @@ in vec2 aTexUv;
 in vec2 aGeomUv;
 
 uniform mat4 projection;
+uniform mat4 model;
 
 out vec2 v_tex_uv;
 out vec2 v_geom_uv;
 
 void main() {
-    gl_Position = projection * vec4(aPos, 0.0, 1.0);
+    gl_Position = projection * model * vec4(aPos, 0.0, 1.0);
     v_tex_uv = aTexUv;
     v_geom_uv = aGeomUv;
 })";
@@ -1058,7 +1068,10 @@ void RenderObjects(const fast_vector<RenderObject>& renderObjects, GLuint target
             if (!obj.visible) {
                 continue;
             }
-            
+
+            mat4 modelMatrix = CreateRotationMatrix(obj.rotation, obj.rotationOrigin, obj.bounds);
+            glUniformMatrix4fv(glGetUniformLocation(shader.id, "model"), 1, GL_FALSE, &modelMatrix.m[0][0]);
+
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, obj.textureId);
             
@@ -1156,7 +1169,7 @@ void ApplyGaussianBlurAndComposite(float blurRadius) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-/**
+/*
     Обновляет матрицу ортографической проекции для 2D-рендеринга.
 
     Функция вычисляет матрицу проекции, которая:
@@ -1176,7 +1189,25 @@ void ApplyGaussianBlurAndComposite(float blurRadius) {
         - T (top) всегда = 0 (ось Y направлена вниз)
         - При нулевых размерах экрана выводит предупреждение
         - Автоматически обрабатывает случай nullptr state
- */
+*/
+
+mat4 CreateRotationMatrix(float angle, Vec2 origin, RectF bounds) {
+    float rad = angle * 3.1415926535f / 180.0f;
+    float cosA = cos(rad);
+    float sinA = sin(rad);
+
+    float centerX = bounds.x + bounds.w * origin.x;
+    float centerY = bounds.y + bounds.h * origin.y;
+
+    mat4 matrix = {{
+        {cosA, -sinA, 0.0f, centerX - cosA * centerX + sinA * centerY},
+        {sinA,  cosA, 0.0f, centerY - sinA * centerX - cosA * centerY},
+        {0.0f,  0.0f, 1.0f, 0.0f},
+        {0.0f,  0.0f, 0.0f, 1.0f}
+    }};
+
+    return matrix;
+}
 
 void UpdateProjectionMatrix() {
     if (state == nullptr) {
@@ -1550,7 +1581,9 @@ DUCKER_API uint32_t DuckerNative_AddRect(RectF bounds, Vec4 color, int zIndex,
     obj.textureId = textureId;
     obj.uvRect = uvRect;
     obj.borderWidth = borderWidth;
-    obj.borderColor = borderColor; 
+    obj.borderColor = borderColor;
+    obj.rotation = 0.0f;
+    obj.rotationOrigin = {0.5f, 0.5f};
 
     obj.uniforms["borderWidth"] = { UniformType::UNIFORM_FLOAT };
     UniformValue& bwVal = obj.uniforms["borderWidth"];
@@ -1577,6 +1610,8 @@ DUCKER_API uint32_t DuckerNative_AddRoundedRect(RectF bounds, Vec2 shapeSize, Ve
     obj.uvRect = uvRect;
     obj.borderWidth = borderWidth;
     obj.borderColor = borderColor;
+    obj.rotation = 0.0f;
+    obj.rotationOrigin = {0.5f, 0.5f};
 
     obj.uniforms["quadSize"] = { UniformType::UNIFORM_VEC2 };
     UniformValue& qsVal = obj.uniforms["quadSize"];
@@ -1628,6 +1663,8 @@ DUCKER_API uint32_t DuckerNative_AddCircle(RectF bounds, Vec4 color, float radiu
     obj.textureId = textureId;
     obj.borderWidth = borderWidth;
     obj.borderColor = borderColor;
+    obj.rotation = 0.0f;
+    obj.rotationOrigin = {0.5f, 0.5f};
 
     obj.uniforms["shapeRadius"] = { UniformType::UNIFORM_FLOAT };
     UniformValue& rVal = obj.uniforms["shapeRadius"];
@@ -1673,6 +1710,8 @@ DUCKER_API uint32_t DuckerNative_AddLine(Vec2 start, Vec2 end, Vec4 color, float
     obj.zIndex = zIndex;
     obj.textureId = 0;
     obj.controlPoints.resize(numControls);
+    obj.rotation = 0.0f;
+    obj.rotationOrigin = {0.5f, 0.5f};
 
     if (numControls > 0) {
         memcpy(obj.controlPoints.data(), controls, numControls * sizeof(Vec2));
@@ -1793,6 +1832,28 @@ DUCKER_API void DuckerNative_SetObjectCornerRadius(uint32_t objectId, float radi
         val.type = UniformType::UNIFORM_FLOAT;
         val.data.resize(sizeof(float));
         memcpy(val.data.data(), &radius, sizeof(float));
+    }
+}
+
+DUCKER_API void DuckerNative_SetObjectRotation(uint32_t objectId, float rotation) {
+    RenderObject* obj = FindObject(objectId);
+    if (obj != nullptr) {
+        obj->rotation = rotation;
+    }
+}
+
+DUCKER_API void DuckerNative_SetObjectRotationOrigin(uint32_t objectId, Vec2 origin) {
+    RenderObject* obj = FindObject(objectId);
+    if (obj != nullptr) {
+        obj->rotationOrigin = origin;
+    }
+}
+
+DUCKER_API void DuckerNative_SetObjectRotationAndOrigin(uint32_t objectId, float rotation, Vec2 origin) {
+    RenderObject* obj = FindObject(objectId);
+    if (obj != nullptr) {
+        obj->rotation = rotation;
+        obj->rotationOrigin = origin;
     }
 }
 
