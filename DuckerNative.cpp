@@ -248,7 +248,7 @@ struct RenderObject {
 
     std::map<std::string, UniformValue> uniforms;
 
-    int elevation = 0;
+    int elevation = 0.0;
 
     float rotation = 0.0f;
     Vec2 rotationOrigin = {0.5f, 0.5f};
@@ -1121,6 +1121,7 @@ void RenderObjects(const fast_vector<RenderObject>& renderObjects, GLuint target
 void ApplyGaussianBlurAndComposite(float blurRadius) {
     if (blurRadius <= 0.0f) {
         // Без блюра - композит напрямую
+        
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glUseProgram(state->shaders[1].id); // Простой шейдер для композита
         glUniform4f(glGetUniformLocation(state->shaders[1].id, "objectColor"), 1.0f, 1.0f, 1.0f, 1.0f);
@@ -1146,6 +1147,7 @@ void ApplyGaussianBlurAndComposite(float blurRadius) {
 
     // Горизонтальный проход
     glBindFramebuffer(GL_FRAMEBUFFER, state->intermediateFBO);
+    glDisable(GL_BLEND);
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(state->blurHorizontal.id);
@@ -1160,6 +1162,7 @@ void ApplyGaussianBlurAndComposite(float blurRadius) {
 
     // Вертикальный проход и композит на экран
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glEnable(GL_BLEND);
     glUseProgram(state->blurVertical.id);
     glBindTexture(GL_TEXTURE_2D, state->intermediateTexture);
     glUniform1i(glGetUniformLocation(state->blurVertical.id, "tex"), 0);
@@ -1454,30 +1457,35 @@ DUCKER_API void DuckerNative_Initialize(int screenWidth, int screenHeight) {
 
     // Заполнение пресетов теней Material Design 3 (из реверс-инжиниринга Android/MDC)
     state->shadowPresets[0] = {};
+
     state->shadowPresets[1] = {
-        {0.20f, 2.0f, 1.0f, -1.0f}, // Umbra
-        {0.14f, 1.0f, 1.0f, 0.0f},  // Penumbra
-        {0.12f, 1.0f, 3.0f, 0.0f}   // Ambient
+        {0.20f, 2.0f, 1.0f, -1.0f},
+        {0.14f, 1.0f, 1.0f, 0.0f},
+        {0.12f, 1.0f, 3.0f, 0.0f}
     };
+
     state->shadowPresets[2] = {
         {0.20f, 3.0f, 1.0f, -2.0f},
         {0.14f, 2.0f, 2.0f, 0.0f},
         {0.12f, 1.0f, 5.0f, 0.0f}
     };
+
     state->shadowPresets[3] = {
         {0.20f, 3.0f, 3.0f, -2.0f},
         {0.14f, 3.0f, 4.0f, 0.0f},
         {0.12f, 1.0f, 8.0f, 0.0f}
     };
+
     state->shadowPresets[4] = {
         {0.20f, 2.0f, 4.0f, -1.0f},
         {0.14f, 4.0f, 5.0f, 0.0f},
         {0.12f, 1.0f, 10.0f, 0.0f}
     };
+    
     state->shadowPresets[5] = {
         {0.20f, 3.0f, 5.0f, -1.0f},
-        {0.14f, 5.0f, 8.0f, 0.0f},
-        {0.12f, 1.0f, 14.0f, 0.0f}
+        {0.14f, 6.0f, 10.0f, 0.0f},
+        {0.12f, 1.0f, 18.0f, 0.0f}
     };
     // Продолжить для 6-24 по аналогии из источника, но для примера достаточно. Можно добавить все.
 
@@ -2328,35 +2336,49 @@ DUCKER_API void DuckerNative_Render() {
             shadowObj.bounds.w += 2 * s;
             shadowObj.bounds.h += 2 * s;
 
-            shadowObj.uniforms["quadSize"] = { UniformType::UNIFORM_VEC2 };
-            UniformValue& qsVal = shadowObj.uniforms["quadSize"];
-            qsVal.data.resize(sizeof(Vec2));
+            // ИСПРАВЛЕНИЕ ЗДЕСЬ: Безопасно создаем и заполняем uniforms для тени,
+            // не читая из потенциально несуществующих полей.
+
+            // 1. Обновляем quadSize для шейдера
             Vec2 quadSize = {shadowObj.bounds.w, shadowObj.bounds.h};
+            UniformValue& qsVal = shadowObj.uniforms["quadSize"];
+            qsVal.type = UniformType::UNIFORM_VEC2;
+            qsVal.data.resize(sizeof(Vec2));
             memcpy(qsVal.data.data(), &quadSize, sizeof(Vec2));
 
             if (shadowObj.type == ObjectType::RoundedRect) {
-                Vec2 shapeSize;
-                memcpy(&shapeSize, shadowObj.uniforms["shapeSize"].data.data(), sizeof(Vec2));
-                shapeSize.x += 2 * s;
-                shapeSize.y += 2 * s;
-                memcpy(shadowObj.uniforms["shapeSize"].data.data(), &shapeSize, sizeof(Vec2));
+                // 2. Безопасно вычисляем shapeSize, основываясь на размерах оригинального объекта
+                Vec2 shapeSize = { obj.bounds.w + 2 * s, obj.bounds.h + 2 * s };
+                UniformValue& ssVal = shadowObj.uniforms["shapeSize"];
+                ssVal.type = UniformType::UNIFORM_VEC2;
+                ssVal.data.resize(sizeof(Vec2));
+                memcpy(ssVal.data.data(), &shapeSize, sizeof(Vec2));
 
+                // 3. Безопасно читаем cornerRadius из ОРИГИНАЛЬНОГО объекта, где он гарантированно есть
                 float cornerRadius;
-                memcpy(&cornerRadius, shadowObj.uniforms["cornerRadius"].data.data(), sizeof(float));
-                cornerRadius += s;
-                memcpy(shadowObj.uniforms["cornerRadius"].data.data(), &cornerRadius, sizeof(float));
+                memcpy(&cornerRadius, obj.uniforms.at("cornerRadius").data.data(), sizeof(float));
+                cornerRadius += s; // Применяем spread
+                UniformValue& crVal = shadowObj.uniforms["cornerRadius"];
+                crVal.type = UniformType::UNIFORM_FLOAT;
+                crVal.data.resize(sizeof(float));
+                memcpy(crVal.data.data(), &cornerRadius, sizeof(float));
+
             } else if (shadowObj.type == ObjectType::Circle) {
+                // 4. Аналогично для круга
                 float shapeRadius;
-                memcpy(&shapeRadius, shadowObj.uniforms["shapeRadius"].data.data(), sizeof(float));
+                memcpy(&shapeRadius, obj.uniforms.at("shapeRadius").data.data(), sizeof(float));
                 shapeRadius += s;
-                memcpy(shadowObj.uniforms["shapeRadius"].data.data(), &shapeRadius, sizeof(float));
+                UniformValue& srVal = shadowObj.uniforms["shapeRadius"];
+                srVal.type = UniformType::UNIFORM_FLOAT;
+                srVal.data.resize(sizeof(float));
+                memcpy(srVal.data.data(), &shapeRadius, sizeof(float));
             }
 
             shadowObj.textureId = 0;
             shadowObj.borderWidth = 0.0f;
-            shadowObj.shaderId = 0;
-            shadowObj.scissorRect = {0.0f, 0.0f, static_cast<float>(state->screenWidth), static_cast<float>(state->screenHeight)}; // Полный экран для теней
-
+            shadowObj.shaderId = 0; // Используем стандартный шейдер для типа объекта
+            shadowObj.scissorRect = {0.0f, 0.0f, static_cast<float>(state->screenWidth), static_cast<float>(state->screenHeight)};
+            
             blurGroups[layer.blurRadius].push_back(shadowObj);
         }
     }
@@ -2366,10 +2388,12 @@ DUCKER_API void DuckerNative_Render() {
         float blurRadius = groupPair.first;
         const fast_vector<RenderObject>& group = groupPair.second;
 
+        glDisable(GL_BLEND);
         RenderObjects(group, state->shadowFBO);
         ApplyGaussianBlurAndComposite(blurRadius);
     }
 
+    // Рендерим основные объекты
     RenderObjects(state->objects, 0);
 
     glDisable(GL_SCISSOR_TEST);

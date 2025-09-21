@@ -76,6 +76,7 @@ DUCKER_API void DuckerNative_SetObjectCornerRadius(uint32_t objectId, float radi
 DUCKER_API void DuckerNative_SetObjectRotation(uint32_t objectId, float rotation);
 DUCKER_API void DuckerNative_SetObjectRotationOrigin(uint32_t objectId, Vec2 origin);
 DUCKER_API void DuckerNative_SetObjectRotationAndOrigin(uint32_t objectId, float rotation, Vec2 origin);
+DUCKER_API void DuckerNative_SetObjectElevation(uint32_t objectId, int elevation);
 
 DUCKER_API void DuckerNative_BeginContainer(RectF bounds);
 DUCKER_API void DuckerNative_EndContainer();
