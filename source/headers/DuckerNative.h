@@ -73,6 +73,7 @@ DUCKER_API void DuckerNative_DeleteShader(uint32_t shaderId);
 DUCKER_API void DuckerNative_SetObjectShader(uint32_t objectId, uint32_t shaderId);
 DUCKER_API void DuckerNative_SetObjectUniform(uint32_t objectId, const char* name, UniformType type, const void* data);
 DUCKER_API void DuckerNative_SetObjectCornerRadius(uint32_t objectId, float radius);
+DUCKER_API void DuckerNative_SetObjectShadowColor(uint32_t objectId, Vec4 color);
 DUCKER_API void DuckerNative_SetObjectRotation(uint32_t objectId, float rotation);
 DUCKER_API void DuckerNative_SetObjectRotationOrigin(uint32_t objectId, Vec2 origin);
 DUCKER_API void DuckerNative_SetObjectRotationAndOrigin(uint32_t objectId, float rotation, Vec2 origin);

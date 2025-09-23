@@ -253,6 +253,8 @@ struct RenderObject {
     float rotation = 0.0f;
     Vec2 rotationOrigin = {0.5f, 0.5f};
 
+    Vec4 shadowColor = {0.0f, 0.0f, 0.0f, 1.0f};
+
     /*
         Эти параметры нужны только для линий,
             в случае других объектов они не используются.
@@ -1843,6 +1845,13 @@ DUCKER_API void DuckerNative_SetObjectCornerRadius(uint32_t objectId, float radi
     }
 }
 
+DUCKER_API void DuckerNative_SetObjectShadowColor(uint32_t objectId, Vec4 color) {
+    RenderObject* obj = FindObject(objectId);
+    if (obj != nullptr) {
+        obj->shadowColor = color;
+    }
+}
+
 DUCKER_API void DuckerNative_SetObjectRotation(uint32_t objectId, float rotation) {
     RenderObject* obj = FindObject(objectId);
     if (obj != nullptr) {
@@ -2327,7 +2336,8 @@ DUCKER_API void DuckerNative_Render() {
 
         for (const auto& layer : presetIt->second) {
             RenderObject shadowObj = obj;
-            shadowObj.color = {0.0f, 0.0f, 0.0f, layer.opacity};
+            shadowObj.color = {obj.shadowColor.x, obj.shadowColor.y,
+                obj.shadowColor.z, layer.opacity};
             shadowObj.bounds.y += layer.yOffset;
 
             float s = layer.spread;
