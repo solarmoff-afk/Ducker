@@ -1578,6 +1578,8 @@ DUCKER_API void DuckerNative_Clear() {
     state->objectIdToIndex.clear();
     state->containerStack.clear();
     state->scissorStack.clear();
+    
+    state->nextObjectId = 1;
 }
 
 DUCKER_API void DuckerNative_SetScreenSize(int screenWidth, int screenHeight) {
@@ -2461,10 +2463,6 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
             shadowObj.bounds.w += 2 * s;
             shadowObj.bounds.h += 2 * s;
 
-            // ИСПРАВЛЕНИЕ ЗДЕСЬ: Безопасно создаем и заполняем uniforms для тени,
-            // не читая из потенциально несуществующих полей.
-
-            // 1. Обновляем quadSize для шейдера
             Vec2 quadSize = {shadowObj.bounds.w, shadowObj.bounds.h};
             UniformValue& qsVal = shadowObj.uniforms["quadSize"];
             qsVal.type = UniformType::UNIFORM_VEC2;
@@ -2472,24 +2470,20 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
             memcpy(qsVal.data.data(), &quadSize, sizeof(Vec2));
 
             if (shadowObj.type == ObjectType::RoundedRect) {
-                // 2. Безопасно вычисляем shapeSize, основываясь на размерах оригинального объекта
                 Vec2 shapeSize = { obj.bounds.w + 2 * s, obj.bounds.h + 2 * s };
                 UniformValue& ssVal = shadowObj.uniforms["shapeSize"];
                 ssVal.type = UniformType::UNIFORM_VEC2;
                 ssVal.data.resize(sizeof(Vec2));
                 memcpy(ssVal.data.data(), &shapeSize, sizeof(Vec2));
 
-                // 3. Безопасно читаем cornerRadius из ОРИГИНАЛЬНОГО объекта, где он гарантированно есть
                 float cornerRadius;
                 memcpy(&cornerRadius, obj.uniforms.at("cornerRadius").data.data(), sizeof(float));
-                cornerRadius += s; // Применяем spread
+                cornerRadius += s;
                 UniformValue& crVal = shadowObj.uniforms["cornerRadius"];
                 crVal.type = UniformType::UNIFORM_FLOAT;
                 crVal.data.resize(sizeof(float));
                 memcpy(crVal.data.data(), &cornerRadius, sizeof(float));
-
             } else if (shadowObj.type == ObjectType::Circle) {
-                // 4. Аналогично для круга
                 float shapeRadius;
                 memcpy(&shapeRadius, obj.uniforms.at("shapeRadius").data.data(), sizeof(float));
                 shapeRadius += s;
@@ -2501,14 +2495,13 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
 
             shadowObj.textureId = 0;
             shadowObj.borderWidth = 0.0f;
-            shadowObj.shaderId = 0; // Используем стандартный шейдер для типа объекта
+            shadowObj.shaderId = 0;
             shadowObj.scissorRect = {0.0f, 0.0f, static_cast<float>(state->screenWidth), static_cast<float>(state->screenHeight)};
             
             blurGroups[layer.blurRadius].push_back(shadowObj);
         }
     }
 
-    // Рендерим тени
     for (const auto& groupPair : blurGroups) {
         float blurRadius = groupPair.first;
         const fast_vector<RenderObject>& group = groupPair.second;
@@ -2518,7 +2511,6 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
         ApplyGaussianBlurAndComposite(blurRadius);
     }
 
-    // Рендерим основные объекты
     RenderObjects(state->objects, 0);
 
     glDisable(GL_SCISSOR_TEST);

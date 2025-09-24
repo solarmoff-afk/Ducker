@@ -49,7 +49,7 @@ DUCKER_API void DuckerNative_SetupGlad(GLADloadproc loader);
 
 DUCKER_API void DuckerNative_Initialize(int screenWidth, int screenHeight);
 DUCKER_API void DuckerNative_Shutdown();
-DUCKER_API void DuckerNative_Render();
+DUCKER_API void DuckerNative_Render(float r, float g, float b);
 DUCKER_API void DuckerNative_SetScreenSize(int screenWidth, int screenHeight);
 DUCKER_API void DuckerNative_Clear();
 
