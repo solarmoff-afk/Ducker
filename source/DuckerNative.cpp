@@ -51,6 +51,16 @@
 #endif
 
 /*
+    Глобальный указатель на AssetManager (Необходимо на Android)
+*/
+
+#ifdef __ANDROID__
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+static AAssetManager* g_assetManager = nullptr;
+#endif
+
+/*
     Используется для передачи в вершинный шейдер
 
     Мы не будем использовать GLM чтобы не тянуть лишние зависимости,
@@ -386,6 +396,11 @@ struct RendererState {
     GLuint quadVBO = 0;
 
     std::map<int, std::vector<ShadowLayer>> shadowPresets;
+
+    #ifdef __ANDROID__
+        bool useAssetManager = true;
+        std::string resourcePath;
+    #endif
 };
 
 static RendererState* state = nullptr;
@@ -513,7 +528,7 @@ const char* RECT_FS_SRC = SHADER_VERSION OUT_FRAG
 "uniform sampler2D objectTexture;\n"
 "uniform bool useTexture;\n"
 "void main() {\n"
-"    vec4 resultColor;\n" // Временная переменная для унификации
+"    vec4 resultColor;\n"
 "    if (useTexture) {\n"
 "        resultColor = " TEXTURE_FUNC "(objectTexture, v_tex_uv) * objectColor;\n"
 "    } else {\n"
@@ -1578,6 +1593,43 @@ DUCKER_API void DuckerNative_SetScreenSize(int screenWidth, int screenHeight) {
 }
 
 /*
+    Устанавливает базовый путь для загрузки ресурсов (шрифтов, текстур)
+    Эта функция работает только на android
+
+    Если путь равен "assets/" движок будет использовать AAssetManager для чтения файлов прямо
+    из апк
+
+    @Если указан любой другой путь (например абсолютный путь полученный от getFilesDir())
+    движок будет использовать стандартные функции (fopen, stbi_load) для чтения из
+    файловой системы устройства
+*/
+
+DUCKER_API void DuckerNative_SetResourcePath(const char* path) {
+    #ifdef __ANDROID__
+        if (state == nullptr || path == nullptr) {
+            return;
+        }
+    
+        if (strcmp(path, "assets/") == 0) {
+            state->useAssetManager = true;
+            state->resourcePath = "";
+        } else {
+            state->useAssetManager = false;
+            state->resourcePath = path;
+        }
+    #else
+        (void)path;
+    #endif
+}
+    
+#ifdef __ANDROID__
+extern "C" JNIEXPORT void JNICALL
+Java_ru_update_duckerjni_DuckerBridge_nativeSetAssetManager(JNIEnv* env, jclass /*clazz*/, jobject assetManager) {
+    g_assetManager = AAssetManager_fromJava(env, assetManager);
+}
+#endif
+
+/*
     Базовые функции для создания объектов
 */
 
@@ -1887,10 +1939,37 @@ DUCKER_API void DuckerNative_SetObjectElevation(uint32_t objectId, int elevation
 */
 
 DUCKER_API uint32_t DuckerNative_LoadFont(const char* filepath, float size) {
-    if (state == nullptr)  {
+    if (state == nullptr) {
         return 0;
     }
-    
+
+    fast_vector<unsigned char> ttf_buffer;
+
+#ifdef __ANDROID__
+    if (state->useAssetManager) {
+        if (g_assetManager == nullptr) return 0;
+        
+        AAsset* asset = AAssetManager_open(g_assetManager, filepath, AASSET_MODE_BUFFER);
+        if (asset == nullptr) return 0;
+
+        size_t assetLength = AAsset_getLength(asset);
+        ttf_buffer.resize(assetLength);
+        AAsset_read(asset, ttf_buffer.data(), assetLength);
+        AAsset_close(asset);
+    } else {
+        std::string fullPath = state->resourcePath + filepath;
+        FILE* file = fopen(fullPath.c_str(), "rb");
+        if (file == nullptr) return 0;
+
+        fseek(file, 0, SEEK_END);
+        long fsize = ftell(file);
+        fseek(file, 0, SEEK_SET);
+
+        ttf_buffer.resize(fsize);
+        fread(ttf_buffer.data(), 1, fsize, file);
+        fclose(file);
+    }
+#else
     FILE* file = fopen(filepath, "rb");
     if (file == nullptr)  {
         return 0;
@@ -1900,11 +1979,14 @@ DUCKER_API uint32_t DuckerNative_LoadFont(const char* filepath, float size) {
     long fsize = ftell(file);
     fseek(file, 0, SEEK_SET);
     
-    fast_vector<unsigned char> ttf_buffer;
     ttf_buffer.resize(fsize);
-    
     fread(ttf_buffer.data(), 1, fsize, file);
     fclose(file);
+#endif
+
+    if (ttf_buffer.empty()) {
+        return 0;
+    }
 
     /*
         Используем размер атласа 4096 на 4096 для поддержки большого размера
@@ -1949,8 +2031,7 @@ DUCKER_API uint32_t DuckerNative_LoadFont(const char* filepath, float size) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     
-    uint32_t fontId = state->nextFontId;
-    state->nextFontId = state->nextFontId + 1;
+    uint32_t fontId = state->nextFontId++;
     state->fonts[fontId] = font;
     return fontId;
 }
@@ -2118,12 +2199,41 @@ DUCKER_API void DuckerNative_DeleteFont(uint32_t fontId) {
     }
 }
 
-DUCKER_API uint32_t DuckerNative_LoadTexture(const char* filepath, int* outWidth, 
-        int* outHeight) {
+DUCKER_API uint32_t DuckerNative_LoadTexture(const char* filepath, int* outWidth, int* outHeight) {
     int width;
     int height;
     int nrChannels;
-    unsigned char *data = stbi_load(filepath, &width, &height, &nrChannels, 0);
+    unsigned char *data = nullptr;
+
+#ifdef __ANDROID__
+    if (state == nullptr)  {
+        return 0;
+    }
+
+    if (state->useAssetManager)  {
+        if (g_assetManager == nullptr)  {
+            return 0;
+        }
+
+        AAsset* asset = AAssetManager_open(g_assetManager, filepath, AASSET_MODE_UNKNOWN);
+        if (asset == nullptr)  {
+            return 0;
+        }
+        
+        size_t size = AAsset_getLength(asset);
+        unsigned char *buffer = new unsigned char[size];
+        AAsset_read(asset, buffer, size);
+        AAsset_close(asset);
+
+        data = stbi_load_from_memory(buffer, static_cast<int>(size), &width, &height, &nrChannels, 0);
+        delete[] buffer;
+    } else  {
+        std::string fullPath = state->resourcePath + filepath;
+        data = stbi_load(fullPath.c_str(), &width, &height, &nrChannels, 0);
+    }
+#else
+    data = stbi_load(filepath, &width, &height, &nrChannels, 0);
+#endif
 
     if (data == nullptr) {
         return 0;
@@ -2153,7 +2263,9 @@ DUCKER_API uint32_t DuckerNative_LoadTexture(const char* filepath, int* outWidth
     
     if (outWidth != nullptr)  {
         *outWidth = width;
-    } if (outHeight != nullptr) {
+    }
+    
+    if (outHeight != nullptr) {
         *outHeight = height;
     }
 
@@ -2283,10 +2395,7 @@ DUCKER_API void DuckerNative_EndContainer() {
     state->scissorStack.pop_back();
 }
 
-DUCKER_API void DuckerNative_Render(float r, float g, float b) {
-    glClearColor(r, g, b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
+DUCKER_API void DuckerNative_Render() {
     if (state == nullptr || state->objects.empty())
         return;
     
@@ -2349,6 +2458,10 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
             shadowObj.bounds.w += 2 * s;
             shadowObj.bounds.h += 2 * s;
 
+            // ИСПРАВЛЕНИЕ ЗДЕСЬ: Безопасно создаем и заполняем uniforms для тени,
+            // не читая из потенциально несуществующих полей.
+
+            // 1. Обновляем quadSize для шейдера
             Vec2 quadSize = {shadowObj.bounds.w, shadowObj.bounds.h};
             UniformValue& qsVal = shadowObj.uniforms["quadSize"];
             qsVal.type = UniformType::UNIFORM_VEC2;
@@ -2356,20 +2469,24 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
             memcpy(qsVal.data.data(), &quadSize, sizeof(Vec2));
 
             if (shadowObj.type == ObjectType::RoundedRect) {
+                // 2. Безопасно вычисляем shapeSize, основываясь на размерах оригинального объекта
                 Vec2 shapeSize = { obj.bounds.w + 2 * s, obj.bounds.h + 2 * s };
                 UniformValue& ssVal = shadowObj.uniforms["shapeSize"];
                 ssVal.type = UniformType::UNIFORM_VEC2;
                 ssVal.data.resize(sizeof(Vec2));
                 memcpy(ssVal.data.data(), &shapeSize, sizeof(Vec2));
 
+                // 3. Безопасно читаем cornerRadius из ОРИГИНАЛЬНОГО объекта, где он гарантированно есть
                 float cornerRadius;
                 memcpy(&cornerRadius, obj.uniforms.at("cornerRadius").data.data(), sizeof(float));
-                cornerRadius += s;
+                cornerRadius += s; // Применяем spread
                 UniformValue& crVal = shadowObj.uniforms["cornerRadius"];
                 crVal.type = UniformType::UNIFORM_FLOAT;
                 crVal.data.resize(sizeof(float));
                 memcpy(crVal.data.data(), &cornerRadius, sizeof(float));
+
             } else if (shadowObj.type == ObjectType::Circle) {
+                // 4. Аналогично для круга
                 float shapeRadius;
                 memcpy(&shapeRadius, obj.uniforms.at("shapeRadius").data.data(), sizeof(float));
                 shapeRadius += s;
@@ -2381,7 +2498,7 @@ DUCKER_API void DuckerNative_Render(float r, float g, float b) {
 
             shadowObj.textureId = 0;
             shadowObj.borderWidth = 0.0f;
-            shadowObj.shaderId = 0;
+            shadowObj.shaderId = 0; // Используем стандартный шейдер для типа объекта
             shadowObj.scissorRect = {0.0f, 0.0f, static_cast<float>(state->screenWidth), static_cast<float>(state->screenHeight)};
             
             blurGroups[layer.blurRadius].push_back(shadowObj);
