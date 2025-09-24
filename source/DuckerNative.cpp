@@ -1578,7 +1578,7 @@ DUCKER_API void DuckerNative_Clear() {
     state->objectIdToIndex.clear();
     state->containerStack.clear();
     state->scissorStack.clear();
-    
+
     state->nextObjectId = 1;
 }
 
@@ -1587,6 +1587,8 @@ DUCKER_API void DuckerNative_SetScreenSize(int screenWidth, int screenHeight) {
         std::cout << "[DuckerNative.dll]: RenderState is nullptr. In function: DUCKER_API void DuckerNative_SetScreenSize(int screenWidth, int screenHeight)";
         return;
     }
+
+    glViewport(0, 0, screenWidth, screenHeight);
 
     state->screenWidth = screenWidth;
     state->screenHeight = screenHeight;
