@@ -2395,7 +2395,10 @@ DUCKER_API void DuckerNative_EndContainer() {
     state->scissorStack.pop_back();
 }
 
-DUCKER_API void DuckerNative_Render() {
+DUCKER_API void DuckerNative_Render(float r, float g, float b) {
+    glClearColor(r, g, b, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
     if (state == nullptr || state->objects.empty())
         return;
     

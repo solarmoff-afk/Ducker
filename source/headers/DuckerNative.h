@@ -82,7 +82,6 @@ DUCKER_API void DuckerNative_SetObjectElevation(uint32_t objectId, int elevation
 DUCKER_API void DuckerNative_BeginContainer(RectF bounds);
 DUCKER_API void DuckerNative_EndContainer();
 
-
 DUCKER_API void DuckerNative_SetResourcePath(const char* path);
 
 #ifdef __cplusplus
